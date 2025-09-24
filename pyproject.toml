@@ -23,6 +23,7 @@ changelog_file = "CHANGELOG.md"
 tag_format = "v{version}"
 starting_version = "0.1.0"
 
+
 [tool.semantic_release.branches.develop]
 match = "develop"
 
