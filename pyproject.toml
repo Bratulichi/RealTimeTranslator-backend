@@ -1,19 +1,10 @@
 [project]
 name = "realtimetranslator-backend"
-version = "0.1.0"
+version = "0.1.1"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
-dependencies = [
-    "some-package>=0.1 ; sys_platform == 'linux'",
-    "uvicorn[standard]>=0.37.0",
-]
+dependencies = [ "some-package>=0.1 ; sys_platform == 'linux'", "uvicorn[standard]>=0.37.0",]
 
 [tool.uv.workspace]
-members = [
-    "src/base_async",
-    "src/base_async/src/base_module",
-]
-
-
-
+members = [ "src/base_async", "src/base_async/src/base_module",]
