@@ -21,29 +21,24 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install toml
+      - name: Install dependencies
         run: pip install toml
 
       - name: Get commits and bump version
         run: |
           echo "=== Getting commits to analyze ==="
           
-          # Находим последний коммит с version bump (если есть)
           LAST_VERSION_COMMIT=$(git log --oneline --grep="bump version" -n 1 --pretty=format:"%H" || echo "")
           
           if [ -n "$LAST_VERSION_COMMIT" ]; then
             echo "Last version bump commit: $LAST_VERSION_COMMIT"
-            # Получаем коммиты с последнего version bump до HEAD
             COMMITS_RANGE="${LAST_VERSION_COMMIT}..HEAD"
           else
             echo "No previous version bump found, analyzing last 10 commits"
-            # Если version bump коммитов не было, берем последние 10 коммитов
             COMMITS_RANGE="HEAD~10..HEAD"
           fi
           
           echo "Analyzing commits in range: $COMMITS_RANGE"
-          
-          # Получаем список коммитов
           COMMITS=$(git log --pretty=format:"%s" $COMMITS_RANGE | grep -v "bump version" || echo "")
           
           if [ -z "$COMMITS" ]; then
@@ -57,12 +52,12 @@ jobs:
           
           python << 'EOF'
           import toml
-          import os
+          import re
           from pathlib import Path
           
           # Получаем коммиты
-          commits_text = os.environ.get('COMMITS', '').strip()
-          if not commits_text:
+          commits_text = """$COMMITS"""
+          if not commits_text.strip():
               print("No commits to analyze")
               exit(0)
               
@@ -72,7 +67,7 @@ jobs:
           for i, commit in enumerate(commits, 1):
               print(f"  {i}. {commit}")
           
-          # Читаем текущую версию
+          # Читаем только версию для анализа
           pyproject_path = Path("pyproject.toml")
           data = toml.load(pyproject_path)
           current_version = data["project"]["version"]
@@ -97,36 +92,49 @@ jobs:
                   has_fix = True
                   print(f"  → Found [fix]: {commit}")
           
-          # Определяем тип повышения
+          # Определяем новую версию
           if has_major:
               major += 1
               minor = 0
               patch = 0
               bump_type = "major"
-              print(f"\n🚀 MAJOR version bump: {current_version} → {major}.{minor}.{patch}")
           elif has_minor:
               minor += 1
               patch = 0
               bump_type = "minor"
-              print(f"\n📈 MINOR version bump: {current_version} → {major}.{minor}.{patch}")
           elif has_fix:
               patch += 1
               bump_type = "patch"  
-              print(f"\n🔧 PATCH version bump: {current_version} → {major}.{minor}.{patch}")
           else:
-              print("\n❌ No version keywords found ([fix], [minor], [major]) - no version bump")
+              print("\n❌ No version keywords found")
               exit(0)
           
           new_version = f"{major}.{minor}.{patch}"
-          data["project"]["version"] = new_version
+          print(f"\n🔄 Version bump: {current_version} → {new_version} ({bump_type})")
           
-          # Записываем в pyproject.toml
-          with open(pyproject_path, "w") as f:
-              toml.dump(data, f)
+          # Читаем файл как текст и заменяем только строку с версией
+          with open(pyproject_path, 'r', encoding='utf-8') as f:
+              content = f.read()
           
-          print(f"\n✅ Version updated in pyproject.toml: {current_version} → {new_version}")
+          # Ищем и заменяем строку version = "..." 
+          version_pattern = r'^version\s*=\s*["\'][^"\']*["\']'
+          new_version_line = f'version = "{new_version}"'
           
-          # Создаем флаг для следующего шага
+          updated_content = re.sub(version_pattern, new_version_line, content, flags=re.MULTILINE)
+          
+          # Проверяем, что замена произошла
+          if updated_content == content:
+              print("❌ Failed to update version in pyproject.toml")
+              exit(1)
+          
+          # Записываем обратно
+          with open(pyproject_path, 'w', encoding='utf-8') as f:
+              f.write(updated_content)
+          
+          print(f"✅ Version updated in pyproject.toml: {current_version} → {new_version}")
+          print(f"📝 File formatting preserved!")
+          
+          # Флаг для следующего шага
           with open("version_updated.flag", "w") as f:
               f.write(f"{new_version}\n{bump_type}")
           EOF

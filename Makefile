@@ -2,7 +2,7 @@ IMAGE_NAME = wepal/realtime-translator/backend
 DOCKERFILE = Dockerfile
 CONTEXT = .
 
-tag = $(shell cat $(CONTEXT)/version.txt)
+tag = $(shell grep -m1 '^version' pyproject.toml | sed 's/version *= *"//; s/"//')
 
 IMAGE = $(IMAGE_NAME):$(tag)
 
