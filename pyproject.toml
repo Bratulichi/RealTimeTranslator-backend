@@ -28,6 +28,3 @@ starting_version = "0.1.0"
 match = "develop"
 prerelease = true
 prerelease_token = "dev"
-
-[tool.semantic_release]
-tag_format = "{version}"
