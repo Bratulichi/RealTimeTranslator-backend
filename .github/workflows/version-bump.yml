@@ -24,34 +24,53 @@ jobs:
       - name: Install toml
         run: pip install toml
 
-      - name: Bump version based on commit keywords
+      - name: Get commits and bump version
         run: |
-          echo "Analyzing commits from this push..."
+          echo "=== Getting commits to analyze ==="
           
-          # Получаем все коммиты из этого пуша
-          COMMITS=$(git log --pretty=format:"%s" ${{ github.event.before }}..${{ github.event.after }})
-          echo "Commits in this push:"
-          echo "$COMMITS"
+          # Находим последний коммит с version bump (если есть)
+          LAST_VERSION_COMMIT=$(git log --oneline --grep="bump version" -n 1 --pretty=format:"%H" || echo "")
           
-          # Пропускаем, если последний коммит - это version bump
-          LAST_COMMIT=$(git log -1 --pretty=format:"%s")
-          if [[ "$LAST_COMMIT" == *"bump version"* ]]; then
-            echo "Skipping - last commit was version bump"
+          if [ -n "$LAST_VERSION_COMMIT" ]; then
+            echo "Last version bump commit: $LAST_VERSION_COMMIT"
+            # Получаем коммиты с последнего version bump до HEAD
+            COMMITS_RANGE="${LAST_VERSION_COMMIT}..HEAD"
+          else
+            echo "No previous version bump found, analyzing last 10 commits"
+            # Если version bump коммитов не было, берем последние 10 коммитов
+            COMMITS_RANGE="HEAD~10..HEAD"
+          fi
+          
+          echo "Analyzing commits in range: $COMMITS_RANGE"
+          
+          # Получаем список коммитов
+          COMMITS=$(git log --pretty=format:"%s" $COMMITS_RANGE | grep -v "bump version" || echo "")
+          
+          if [ -z "$COMMITS" ]; then
+            echo "No commits to analyze"
             exit 0
           fi
+          
+          echo "Commits to analyze:"
+          echo "$COMMITS"
+          echo ""
           
           python << 'EOF'
           import toml
           import os
           from pathlib import Path
           
-          # Получаем все коммиты из переменной окружения
-          commits_text = """$COMMITS"""
+          # Получаем коммиты
+          commits_text = os.environ.get('COMMITS', '').strip()
+          if not commits_text:
+              print("No commits to analyze")
+              exit(0)
+              
           commits = [line.strip() for line in commits_text.split('\n') if line.strip()]
           
-          print(f"Analyzing {len(commits)} commits...")
-          for i, commit in enumerate(commits):
-              print(f"  {i+1}. {commit}")
+          print(f"Analyzing {len(commits)} commits:")
+          for i, commit in enumerate(commits, 1):
+              print(f"  {i}. {commit}")
           
           # Читаем текущую версию
           pyproject_path = Path("pyproject.toml")
@@ -62,7 +81,7 @@ jobs:
           version_parts = current_version.split(".")
           major, minor, patch = int(version_parts[0]), int(version_parts[1]), int(version_parts[2])
           
-          # Анализируем все коммиты и определяем максимальный уровень повышения
+          # Анализируем коммиты
           has_major = False
           has_minor = False  
           has_fix = False
@@ -70,32 +89,32 @@ jobs:
           for commit in commits:
               if commit.startswith("[major]"):
                   has_major = True
-                  print(f"Found [major] in: {commit}")
+                  print(f"  → Found [major]: {commit}")
               elif commit.startswith("[minor]"):
                   has_minor = True
-                  print(f"Found [minor] in: {commit}")
+                  print(f"  → Found [minor]: {commit}")
               elif commit.startswith("[fix]"):
                   has_fix = True
-                  print(f"Found [fix] in: {commit}")
+                  print(f"  → Found [fix]: {commit}")
           
-          # Определяем тип повышения (приоритет: major > minor > fix)
+          # Определяем тип повышения
           if has_major:
               major += 1
               minor = 0
               patch = 0
               bump_type = "major"
-              print("\n🚀 Bumping MAJOR version")
+              print(f"\n🚀 MAJOR version bump: {current_version} → {major}.{minor}.{patch}")
           elif has_minor:
               minor += 1
               patch = 0
-              bump_type = "minor" 
-              print("\n📈 Bumping MINOR version")
+              bump_type = "minor"
+              print(f"\n📈 MINOR version bump: {current_version} → {major}.{minor}.{patch}")
           elif has_fix:
               patch += 1
-              bump_type = "patch"
-              print("\n🔧 Bumping PATCH version")
+              bump_type = "patch"  
+              print(f"\n🔧 PATCH version bump: {current_version} → {major}.{minor}.{patch}")
           else:
-              print("\n❌ No version bump keywords found - skipping")
+              print("\n❌ No version keywords found ([fix], [minor], [major]) - no version bump")
               exit(0)
           
           new_version = f"{major}.{minor}.{patch}"
@@ -105,22 +124,29 @@ jobs:
           with open(pyproject_path, "w") as f:
               toml.dump(data, f)
           
-          print(f"✅ Version updated: {current_version} -> {new_version} ({bump_type})")
+          print(f"\n✅ Version updated in pyproject.toml: {current_version} → {new_version}")
+          
+          # Создаем флаг для следующего шага
+          with open("version_updated.flag", "w") as f:
+              f.write(f"{new_version}\n{bump_type}")
           EOF
         env:
-          COMMITS: ${{ steps.get_commits.outputs.commits }}
+          COMMITS: ${{ env.COMMITS }}
 
       - name: Commit version change
         run: |
-          # Проверяем, изменился ли файл
-          if git diff --quiet pyproject.toml; then
-            echo "ℹ️  No version changes to commit"
-          else
-            NEW_VERSION=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+          if [ -f "version_updated.flag" ]; then
+            NEW_VERSION=$(head -n 1 version_updated.flag)
+            BUMP_TYPE=$(tail -n 1 version_updated.flag)
+            
+            echo "Committing version bump to $NEW_VERSION"
             git config user.name github-actions
             git config user.email github-actions@github.com
             git add pyproject.toml
-            git commit -m "chore: bump version to ${NEW_VERSION}"
+            git commit -m "chore: bump version to ${NEW_VERSION} (${BUMP_TYPE})"
             git push
-            echo "✅ Successfully bumped version to ${NEW_VERSION}"
+            
+            echo "✅ Successfully committed version ${NEW_VERSION}"
+          else
+            echo "ℹ️  No version update to commit"
           fi
