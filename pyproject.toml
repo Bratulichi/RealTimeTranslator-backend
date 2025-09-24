@@ -16,14 +16,18 @@ members = [
 ]
 
 [tool.semantic_release]
-version_variable = "pyproject.toml:project.version"
+version_toml = ["pyproject.toml:project.version"]
+build_command = ""
 upload_to_pypi = false
-upload_to_release = false
+upload_to_release = false  # отключаем создание релизов
+publish = false  # отключаем публикацию
 changelog_file = "CHANGELOG.md"
 tag_format = "v{version}"
-starting_version = "0.1.0"
-
+major_on_zero = false
+commit = true  # создавать коммит с новой версией
+push = true   # пушить изменения
 
 [tool.semantic_release.branches.develop]
 match = "develop"
+prerelease = false
 
