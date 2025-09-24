@@ -27,7 +27,7 @@ jobs:
       - name: Bump version based on commit keywords
         run: |
           # Получаем последний коммит
-          LAST_COMMIT=$(git log -1 --pretty=format:"%s")
+          LAST_COMMIT="${{ github.event.head_commit.message }}"
           echo "Last commit: $LAST_COMMIT"
           
           # Пропускаем, если это уже version bump
@@ -36,19 +36,19 @@ jobs:
             exit 0
           fi
           
-          python << 'EOF'
+          # Проверяем ключевые слова и повышаем версию
+          python << EOF
           import toml
-          import os
           from pathlib import Path
-
-          commit_msg = """$LAST_COMMIT"""
+          
+          commit_msg = "$LAST_COMMIT"
           print(f"Analyzing commit: {commit_msg}")
           
           # Читаем текущую версию из pyproject.toml
           pyproject_path = Path("pyproject.toml")
           data = toml.load(pyproject_path)
           current_version = data["project"]["version"]
-          print(f"Current version in pyproject.toml: {current_version}")
+          print(f"Current version: {current_version}")
           
           version_parts = current_version.split(".")
           major, minor, patch = int(version_parts[0]), int(version_parts[1]), int(version_parts[2])
@@ -70,40 +70,35 @@ jobs:
               bump_type = "patch"
               print("Found [fix] at start - bumping patch version")
           else:
-              print("No version bump keywords found at start ([fix], [minor], [major]) - skipping version bump")
+              print("No version bump keywords found at start ([fix], [minor], [major]) - skipping")
               exit(0)
           
           new_version = f"{major}.{minor}.{patch}"
-          
-          # Обновляем версию в data
           data["project"]["version"] = new_version
           
-          # Записываем обратно в pyproject.toml
+          # Записываем в pyproject.toml
           with open(pyproject_path, "w") as f:
               toml.dump(data, f)
           
-          print(f"Version updated in pyproject.toml: {current_version} -> {new_version} ({bump_type})")
-          
-          # Сохраняем информацию для следующего шага
-          with open("version_info.txt", "w") as f:
-              f.write(f"{new_version}\n{bump_type}")
+          print(f"Version updated: {current_version} -> {new_version} ({bump_type})")
+          print(f"UPDATED=true")
+          print(f"NEW_VERSION={new_version}")
+          print(f"BUMP_TYPE={bump_type}")
           EOF
-        env:
-          LAST_COMMIT: ${{ github.event.head_commit.message }}
 
       - name: Commit version change
         run: |
-          if [ -f "version_info.txt" ]; then
-            NEW_VERSION=$(head -n 1 version_info.txt)
-            BUMP_TYPE=$(tail -n 1 version_info.txt)
-            
+          # Проверяем, была ли обновлена версия
+          NEW_VERSION=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+          CURRENT_COMMIT="${{ github.event.head_commit.message }}"
+          
+          if [[ "$CURRENT_COMMIT" == "[fix]"* ]] || [[ "$CURRENT_COMMIT" == "[minor]"* ]] || [[ "$CURRENT_COMMIT" == "[major]"* ]]; then
             git config user.name github-actions
             git config user.email github-actions@github.com
             git add pyproject.toml
-            git commit -m "chore: bump version to ${NEW_VERSION} (${BUMP_TYPE})"
+            git commit -m "chore: bump version to ${NEW_VERSION}"
             git push
-            
-            echo "Successfully committed version ${NEW_VERSION} to pyproject.toml"
+            echo "Successfully bumped version to ${NEW_VERSION}"
           else
-            echo "No version bump needed - no keywords found at start of commit message"
+            echo "No version bump needed"
           fi
