@@ -26,51 +26,76 @@ jobs:
 
       - name: Bump version based on commit keywords
         run: |
-          # Получаем последний коммит
-          LAST_COMMIT="${{ github.event.head_commit.message }}"
-          echo "Last commit: $LAST_COMMIT"
+          echo "Analyzing commits from this push..."
           
-          # Пропускаем, если это уже version bump
+          # Получаем все коммиты из этого пуша
+          COMMITS=$(git log --pretty=format:"%s" ${{ github.event.before }}..${{ github.event.after }})
+          echo "Commits in this push:"
+          echo "$COMMITS"
+          
+          # Пропускаем, если последний коммит - это version bump
+          LAST_COMMIT=$(git log -1 --pretty=format:"%s")
           if [[ "$LAST_COMMIT" == *"bump version"* ]]; then
-            echo "Skipping version bump - last commit was already a version bump"
+            echo "Skipping - last commit was version bump"
             exit 0
           fi
           
-          # Проверяем ключевые слова и повышаем версию
-          python << EOF
+          python << 'EOF'
           import toml
+          import os
           from pathlib import Path
           
-          commit_msg = "$LAST_COMMIT"
-          print(f"Analyzing commit: {commit_msg}")
+          # Получаем все коммиты из переменной окружения
+          commits_text = """$COMMITS"""
+          commits = [line.strip() for line in commits_text.split('\n') if line.strip()]
           
-          # Читаем текущую версию из pyproject.toml
+          print(f"Analyzing {len(commits)} commits...")
+          for i, commit in enumerate(commits):
+              print(f"  {i+1}. {commit}")
+          
+          # Читаем текущую версию
           pyproject_path = Path("pyproject.toml")
           data = toml.load(pyproject_path)
           current_version = data["project"]["version"]
-          print(f"Current version: {current_version}")
+          print(f"\nCurrent version: {current_version}")
           
           version_parts = current_version.split(".")
           major, minor, patch = int(version_parts[0]), int(version_parts[1]), int(version_parts[2])
           
-          # Определяем тип повышения на основе ключевых слов В НАЧАЛЕ коммита
-          if commit_msg.startswith("[major]"):
+          # Анализируем все коммиты и определяем максимальный уровень повышения
+          has_major = False
+          has_minor = False  
+          has_fix = False
+          
+          for commit in commits:
+              if commit.startswith("[major]"):
+                  has_major = True
+                  print(f"Found [major] in: {commit}")
+              elif commit.startswith("[minor]"):
+                  has_minor = True
+                  print(f"Found [minor] in: {commit}")
+              elif commit.startswith("[fix]"):
+                  has_fix = True
+                  print(f"Found [fix] in: {commit}")
+          
+          # Определяем тип повышения (приоритет: major > minor > fix)
+          if has_major:
               major += 1
               minor = 0
               patch = 0
               bump_type = "major"
-              print("Found [major] at start - bumping major version")
-          elif commit_msg.startswith("[minor]"):
+              print("\n🚀 Bumping MAJOR version")
+          elif has_minor:
               minor += 1
               patch = 0
-              bump_type = "minor"
-              print("Found [minor] at start - bumping minor version")
-          elif commit_msg.startswith("[fix]"):
+              bump_type = "minor" 
+              print("\n📈 Bumping MINOR version")
+          elif has_fix:
               patch += 1
               bump_type = "patch"
-              print("Found [fix] at start - bumping patch version")
+              print("\n🔧 Bumping PATCH version")
           else:
-              print("No version bump keywords found at start ([fix], [minor], [major]) - skipping")
+              print("\n❌ No version bump keywords found - skipping")
               exit(0)
           
           new_version = f"{major}.{minor}.{patch}"
@@ -80,25 +105,22 @@ jobs:
           with open(pyproject_path, "w") as f:
               toml.dump(data, f)
           
-          print(f"Version updated: {current_version} -> {new_version} ({bump_type})")
-          print(f"UPDATED=true")
-          print(f"NEW_VERSION={new_version}")
-          print(f"BUMP_TYPE={bump_type}")
+          print(f"✅ Version updated: {current_version} -> {new_version} ({bump_type})")
           EOF
+        env:
+          COMMITS: ${{ steps.get_commits.outputs.commits }}
 
       - name: Commit version change
         run: |
-          # Проверяем, была ли обновлена версия
-          NEW_VERSION=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
-          CURRENT_COMMIT="${{ github.event.head_commit.message }}"
-          
-          if [[ "$CURRENT_COMMIT" == "[fix]"* ]] || [[ "$CURRENT_COMMIT" == "[minor]"* ]] || [[ "$CURRENT_COMMIT" == "[major]"* ]]; then
+          # Проверяем, изменился ли файл
+          if git diff --quiet pyproject.toml; then
+            echo "ℹ️  No version changes to commit"
+          else
+            NEW_VERSION=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
             git config user.name github-actions
             git config user.email github-actions@github.com
             git add pyproject.toml
             git commit -m "chore: bump version to ${NEW_VERSION}"
             git push
-            echo "Successfully bumped version to ${NEW_VERSION}"
-          else
-            echo "No version bump needed"
+            echo "✅ Successfully bumped version to ${NEW_VERSION}"
           fi
