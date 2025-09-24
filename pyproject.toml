@@ -17,7 +17,6 @@ members = [
 
 [tool.semantic_release]
 version_variable = "pyproject.toml:project.version"
-branch = "develop"
 upload_to_pypi = false
 upload_to_release = false
 changelog_file = "CHANGELOG.md"
@@ -26,5 +25,4 @@ starting_version = "0.1.0"
 
 [tool.semantic_release.branches.develop]
 match = "develop"
-prerelease = true
-prerelease_token = "dev"
+
