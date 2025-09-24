@@ -1,32 +1,57 @@
-FROM python:3.11.13-alpine
-
+# === ЭТАП 1: Сборка зависимостей ===
+FROM python:3.11.13-alpine AS builder
 
 WORKDIR /app
 
-# Устанавливаем системные зависимости и uv
+# Устанавливаем только необходимые для сборки зависимости
 RUN apk add --no-cache \
-    bash \
-    musl-locales \
-    musl-locales-lang \
     gcc \
     musl-dev \
     libffi-dev \
-    && pip install uv --no-cache-dir
+    && pip install --no-cache-dir uv
 
-ENV LANG=ru_RU.UTF-8
-ENV LANGUAGE=ru_RU:ru
-ENV LC_ALL=ru_RU.UTF-8
-
+# Копируем файлы конфигурации зависимостей
 COPY pyproject.toml /app/
 COPY src/base_async/pyproject.toml /app/src/base_async/
 COPY src/base_async/src/base_module/pyproject.toml /app/src/base_async/src/base_module/
 
-# Устанавливаем зависимости в системное окружение
-RUN uv pip install --no-cache --system -e .
+# Создаем виртуальное окружение и устанавливаем ТОЛЬКО основные зависимости
+RUN uv venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-# Копируем остальной код
+# Устанавливаем основные зависимости без dev-зависимостей
+RUN uv pip install --no-cache -e . --no-deps || uv pip install --no-cache -e .
+
+# Если нужны дополнительные группы зависимостей для продакшена
+# RUN uv pip install --no-cache -e .[monitoring,database]
+
+# === ЭТАП 2: Финальный образ ===
+FROM python:3.11.13-alpine AS runtime
+
+# Устанавливаем только рантайм зависимости
+RUN apk add --no-cache \
+    bash \
+    musl-locales \
+    musl-locales-lang \
+    && rm -rf /var/cache/apk/*
+
+# Настройка локали
+ENV LANG=ru_RU.UTF-8
+ENV LANGUAGE=ru_RU:ru
+ENV LC_ALL=ru_RU.UTF-8
+
+# Копируем виртуальное окружение из builder этапа
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+
+WORKDIR /app
+
+# Копируем код приложения
 COPY . .
-WORKDIR /app/src
 
 WORKDIR /app/src
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+# Команда запуска с uvloop
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "uvloop", "--workers", "1"]

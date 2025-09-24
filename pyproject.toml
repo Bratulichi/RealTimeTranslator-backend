@@ -3,11 +3,21 @@ name = "realtimetranslator-backend"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
-dependencies = []
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "some-package>=0.1 ; sys_platform == 'linux'",
+    "uvicorn[standard]>=0.37.0",
+]
 
 [tool.uv.workspace]
 members = [
     "src/base_async",
     "src/base_async/src/base_module",
 ]
+
+[tool.semantic_release]
+version_variable = "pyproject.toml:project.version"
+branch = "main"
+upload_to_pypi = false
+upload_to_release = false
+changelog_file = "CHANGELOG.md"
