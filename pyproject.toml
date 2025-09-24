@@ -15,21 +15,5 @@ members = [
     "src/base_async/src/base_module",
 ]
 
-[tool.semantic_release]
-version_toml = ["pyproject.toml:project.version"]
-build_command = ""
-changelog_file = "CHANGELOG.md"
-tag_format = "v{version}"
-major_on_zero = false
 
-[tool.semantic_release.branches.develop]
-match = "develop"
-prerelease = false
-
-[tool.semantic_release.publish]
-upload_to_vcs_release = false
-upload_to_pypi = false
-
-[tool.semantic_release.changelog]
-exclude_commit_patterns = []
 
