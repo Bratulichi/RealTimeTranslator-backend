@@ -139,10 +139,8 @@ jobs:
           NEW_VERSION="${{ steps.version.outputs.new_version }}"
           echo "Updating to version: $NEW_VERSION"
           
-          # Используем sed для замены версии
           sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" pyproject.toml
           
-          # Проверяем, что замена прошла успешно
           if grep -q "version = \"$NEW_VERSION\"" pyproject.toml; then
             echo "Updated pyproject.toml to version $NEW_VERSION (temporary)"
           else
@@ -159,7 +157,10 @@ jobs:
         run: |
           echo "=== Testing Docker build with new version ==="
           
-          if docker build -t test-build:${{ steps.version.outputs.new_version }} .; then
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version *= *"//; s/"//')
+          echo "Building test image for version: $VERSION"
+          
+          if make build; then
             echo "Docker build successful"
             echo "docker_build_success=true" >> $GITHUB_ENV
           else
@@ -168,25 +169,37 @@ jobs:
             exit 1
           fi
 
-      - name: Log in to DockerHub
-        if: steps.version.outputs.should_bump == 'true' && env.docker_build_success == 'true'
-        run: echo "${{ secrets.DOCKER_PASS }}" | docker login -u "${{ secrets.DOCKER_USER }}" --password-stdin
-
       - name: Build and Push Docker image
         if: steps.version.outputs.should_bump == 'true' && env.docker_build_success == 'true'
         env:
           DOCKER_USER: ${{ secrets.DOCKER_USER }}
-          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+          DOCKER_PASS: ${{ secrets.DOCKER_PASS }}
         run: |
-          echo "=== Building and pushing final Docker image ==="
+          echo "=== Building and pushing Docker image via Makefile ==="
           
-          docker build -t $DOCKER_USER/realtimetranslator-backend:$NEW_VERSION \
-                       -t $DOCKER_USER/realtimetranslator-backend:latest .
+          if [ -z "$DOCKER_USER" ] || [ -z "$DOCKER_PASS" ]; then
+            echo "Error: DOCKER_USER or DOCKER_PASS is not set"
+            exit 1
+          fi
           
-          docker push $DOCKER_USER/realtimetranslator-backend:$NEW_VERSION
-          docker push $DOCKER_USER/realtimetranslator-backend:latest
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version *= *"//; s/"//')
+          echo "Building image with version: $VERSION"
+          echo "Image will be: wepal/realtime-translator/backend:$VERSION"
           
-          echo "Docker images pushed successfully"
+          # Собираем образ (уже собран в тесте, но пересобираем для финального пуша)
+          make build
+          
+          # Создаем latest тег
+          docker tag wepal/realtime-translator/backend:$VERSION wepal/realtime-translator/backend:latest
+          
+          # Пушим версионный тег через Makefile
+          make push
+          
+          # Пушим latest тег напрямую
+          echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+          docker push wepal/realtime-translator/backend:latest
+          
+          echo "Docker images (versioned and latest) pushed successfully"
 
       - name: Commit version change (only after successful Docker build)
         if: steps.version.outputs.should_bump == 'true' && env.docker_build_success == 'true'
