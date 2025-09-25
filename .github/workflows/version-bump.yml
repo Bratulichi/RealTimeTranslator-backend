@@ -9,11 +9,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.CICD_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           submodules: recursive
 
       - name: Setup
@@ -64,4 +65,4 @@ jobs:
           NEW_VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version *= *"//; s/"//')
           git add pyproject.toml
           git commit -m "chore: bump version to ${NEW_VERSION}"
-          git push origin develop
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git develop
