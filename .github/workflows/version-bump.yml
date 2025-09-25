@@ -64,5 +64,5 @@ jobs:
           
           NEW_VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version *= *"//; s/"//')
           git add pyproject.toml
-          git commit -m "chore: bump version to ${NEW_VERSION}"
+          git commit -m "[version] ${NEW_VERSION}"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git develop
