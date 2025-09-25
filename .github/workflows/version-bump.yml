@@ -121,9 +121,11 @@ jobs:
             echo "should_bump=false" >> $GITHUB_OUTPUT
             echo "No version bump needed"
           elif [ -f "version_info.txt" ]; then
+            CURRENT_VERSION=$(sed -n '1p' version_info.txt)
             NEW_VERSION=$(sed -n '2p' version_info.txt)
             BUMP_TYPE=$(sed -n '3p' version_info.txt)
             echo "should_bump=true" >> $GITHUB_OUTPUT
+            echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
             echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
             echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
             echo "Will bump to version $NEW_VERSION ($BUMP_TYPE)"
@@ -132,10 +134,16 @@ jobs:
             echo "Version calculation failed"
           fi
 
-      - name: Update version in pyproject.toml (temporary)
+      - name: Backup original pyproject.toml
         if: steps.version.outputs.should_bump == 'true'
         run: |
-          echo "=== Temporarily updating pyproject.toml for Docker build ==="
+          echo "=== Creating backup of pyproject.toml ==="
+          cp pyproject.toml pyproject.toml.backup
+
+      - name: Update version in pyproject.toml (temporary for build test)
+        if: steps.version.outputs.should_bump == 'true'
+        run: |
+          echo "=== Temporarily updating pyproject.toml for Docker build test ==="
           NEW_VERSION="${{ steps.version.outputs.new_version }}"
           echo "Updating to version: $NEW_VERSION"
           
@@ -152,57 +160,66 @@ jobs:
         if: steps.version.outputs.should_bump == 'true'
         uses: docker/setup-buildx-action@v3
 
-      - name: Test Docker build
+      - name: Test Docker build with new version
         if: steps.version.outputs.should_bump == 'true'
         run: |
-          echo "=== Testing Docker build with new version ==="
+          echo "=== Testing Docker build with new version via Makefile ==="
           
           VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version *= *"//; s/"//')
-          echo "Building test image for version: $VERSION"
+          echo "Testing build for version: $VERSION"
           
           if make build; then
-            echo "Docker build successful"
+            echo "Docker build test successful"
             echo "docker_build_success=true" >> $GITHUB_ENV
           else
-            echo "Docker build failed"
+            echo "Docker build test failed - restoring original version"
+            cp pyproject.toml.backup pyproject.toml
             echo "docker_build_success=false" >> $GITHUB_ENV
             exit 1
           fi
 
-      - name: Build and Push Docker image
+      - name: Push Docker image
         if: steps.version.outputs.should_bump == 'true' && env.docker_build_success == 'true'
         env:
           DOCKER_USER: ${{ secrets.DOCKER_USER }}
           DOCKER_PASS: ${{ secrets.DOCKER_PASS }}
         run: |
-          echo "=== Building and pushing Docker image via Makefile ==="
+          echo "=== Pushing Docker image via Makefile ==="
           
           if [ -z "$DOCKER_USER" ] || [ -z "$DOCKER_PASS" ]; then
             echo "Error: DOCKER_USER or DOCKER_PASS is not set"
+            cp pyproject.toml.backup pyproject.toml
             exit 1
           fi
           
           VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version *= *"//; s/"//')
-          echo "Building image with version: $VERSION"
-          echo "Image will be: wepal/realtime-translator/backend:$VERSION"
-          
-          # Собираем образ (уже собран в тесте, но пересобираем для финального пуша)
-          make build
-          
-          # Создаем latest тег
-          docker tag wepal/realtime-translator/backend:$VERSION wepal/realtime-translator/backend:latest
+          echo "Pushing image with version: $VERSION"
           
           # Пушим версионный тег через Makefile
-          make push
+          if make push; then
+            echo "Docker push successful"
+            echo "docker_push_success=true" >> $GITHUB_ENV
+          else
+            echo "Docker push failed - restoring original version"
+            cp pyproject.toml.backup pyproject.toml
+            exit 1
+          fi
           
-          # Пушим latest тег напрямую
-          echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-          docker push wepal/realtime-translator/backend:latest
+          # Создаем и пушим latest тег
+          IMAGE_NAME="wepal/realtime-translator-backend"
+          docker tag "$IMAGE_NAME:$VERSION" "$IMAGE_NAME:latest"
           
-          echo "Docker images (versioned and latest) pushed successfully"
+          if docker push "$IMAGE_NAME:latest"; then
+            echo "Latest tag pushed successfully"
+          else
+            echo "Failed to push latest tag - but version tag was pushed successfully"
+            # Не фейлим тут, так как основной тег уже запушен
+          fi
+          
+          echo "Docker images pushed successfully"
 
-      - name: Commit version change (only after successful Docker build)
-        if: steps.version.outputs.should_bump == 'true' && env.docker_build_success == 'true'
+      - name: Commit version change (only after successful Docker build and push)
+        if: steps.version.outputs.should_bump == 'true' && env.docker_build_success == 'true' && env.docker_push_success == 'true'
         run: |
           NEW_VERSION="${{ steps.version.outputs.new_version }}"
           BUMP_TYPE="${{ steps.version.outputs.bump_type }}"
@@ -216,10 +233,17 @@ jobs:
           git push
           
           echo "Successfully committed version ${NEW_VERSION}"
+          
+          # Удаляем backup только после успешного коммита
+          rm -f pyproject.toml.backup
 
       - name: Cleanup on failure
         if: failure() && steps.version.outputs.should_bump == 'true'
         run: |
-          echo "=== Build failed, reverting pyproject.toml ==="
-          git checkout HEAD -- pyproject.toml
-          echo "Version bump cancelled due to build failure"
+          echo "=== Build or push failed, reverting pyproject.toml ==="
+          if [ -f pyproject.toml.backup ]; then
+            cp pyproject.toml.backup pyproject.toml
+            rm -f pyproject.toml.backup
+            echo "Reverted to original version"
+          fi
+          echo "Version bump cancelled due to failure"
