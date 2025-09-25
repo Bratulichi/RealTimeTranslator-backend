@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.CICD_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           submodules: recursive
 
       - name: Set up Python
@@ -134,10 +134,13 @@ jobs:
             echo "Version calculation failed"
           fi
 
-      - name: Backup original pyproject.toml
+      - name: Backup original state
         if: steps.version.outputs.should_bump == 'true'
         run: |
-          echo "=== Creating backup of pyproject.toml ==="
+          echo "=== Creating backup of current git state ==="
+          # Сохраняем текущий коммит для возможного отката
+          echo "$(git rev-parse HEAD)" > original_commit.txt
+          # Также создаем backup pyproject.toml
           cp pyproject.toml pyproject.toml.backup
 
       - name: Update version in pyproject.toml (temporary for build test)
@@ -204,7 +207,18 @@ jobs:
             cp pyproject.toml.backup pyproject.toml
             exit 1
           fi
-
+          
+          # Создаем и пушим latest тег
+          IMAGE_NAME="wepal/realtime-translator-backend"
+          docker tag "$IMAGE_NAME:$VERSION" "$IMAGE_NAME:latest"
+          
+          if docker push "$IMAGE_NAME:latest"; then
+            echo "Latest tag pushed successfully"
+          else
+            echo "Failed to push latest tag - but version tag was pushed successfully"
+            # Не фейлим тут, так как основной тег уже запушен
+          fi
+          
           echo "Docker images pushed successfully"
 
       - name: Commit version change (only after successful Docker build and push)
@@ -215,24 +229,43 @@ jobs:
           
           echo "=== Committing version change ==="
           
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-          git add pyproject.toml
-          git commit -m "chore: increase version to ${NEW_VERSION} (${BUMP_TYPE})"
-          git push
+          # Настраиваем git с правильными учетными данными
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          echo "Successfully committed version ${NEW_VERSION}"
+          # Добавляем все изменения (включая ваши + версию)
+          git add -A
+          git commit -m "chore: bump version to ${NEW_VERSION} (${BUMP_TYPE})"
+          
+          # Пушим с использованием токена
+          git push origin develop
+          
+          echo "Successfully committed version ${NEW_VERSION} with all changes"
           
           # Удаляем backup только после успешного коммита
-          rm -f pyproject.toml.backup
+          rm -f pyproject.toml.backup original_commit.txt
 
       - name: Cleanup on failure
         if: failure() && steps.version.outputs.should_bump == 'true'
         run: |
-          echo "=== Build or push failed, reverting pyproject.toml ==="
-          if [ -f pyproject.toml.backup ]; then
-            cp pyproject.toml.backup pyproject.toml
-            rm -f pyproject.toml.backup
-            echo "Reverted to original version"
+          echo "=== Build or push failed, reverting all changes ==="
+          
+          # Читаем оригинальный коммит
+          if [ -f original_commit.txt ]; then
+            ORIGINAL_COMMIT=$(cat original_commit.txt)
+            echo "Reverting to commit: $ORIGINAL_COMMIT"
+            
+            # Сбрасываем все изменения к оригинальному состоянию
+            git reset --hard $ORIGINAL_COMMIT
+            echo "Reverted all changes to original state"
+          else
+            echo "No original commit found, reverting only pyproject.toml"
+            if [ -f pyproject.toml.backup ]; then
+              cp pyproject.toml.backup pyproject.toml
+            fi
           fi
-          echo "Version bump cancelled due to failure"
+          
+          # Очищаем временные файлы
+          rm -f pyproject.toml.backup original_commit.txt
+          
+          echo "All changes cancelled due to failure"
