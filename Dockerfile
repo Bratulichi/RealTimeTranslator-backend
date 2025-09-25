@@ -10,20 +10,15 @@ RUN apk add --no-cache \
     libffi-dev \
     && pip install --no-cache-dir uv
 
-# Копируем файлы конфигурации зависимостей
 COPY pyproject.toml /app/
 COPY src/base_async/pyproject.toml /app/src/base_async/
 COPY src/base_async/src/base_module/pyproject.toml /app/src/base_async/src/base_module/
 
-# Создаем виртуальное окружение и устанавливаем ТОЛЬКО основные зависимости
 RUN uv venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Устанавливаем основные зависимости без dev-зависимостей
-RUN uv pip install --no-cache -e . --no-deps || uv pip install --no-cache -e .
+RUN uv pip install --no-cache -e .
 
-# Если нужны дополнительные группы зависимостей для продакшена
-# RUN uv pip install --no-cache -e .[monitoring,database]
 
 # === ЭТАП 2: Финальный образ ===
 FROM python:3.11.13-alpine AS runtime
