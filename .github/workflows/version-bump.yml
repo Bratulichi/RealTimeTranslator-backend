@@ -15,7 +15,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.CICD_TOKEN }}
-          submodules: recursive  # Подтягиваем подмодули
+          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -30,7 +30,6 @@ jobs:
         run: |
           echo "=== Calculating new version ==="
           
-          # Находим последний коммит с version bump
           LAST_VERSION_COMMIT=$(git log --oneline --grep="bump version" -n 1 --pretty=format:"%H" || echo "")
           
           if [ -n "$LAST_VERSION_COMMIT" ]; then
@@ -58,7 +57,6 @@ jobs:
           python << 'EOF'
           import toml
           import os
-          import re
           from pathlib import Path
           
           commits_text = os.environ.get('COMMITS', '').strip()
@@ -72,7 +70,6 @@ jobs:
           for i, commit in enumerate(commits, 1):
               print(f"  {i}. {commit}")
           
-          # Читаем текущую версию
           pyproject_path = Path("pyproject.toml")
           data = toml.load(pyproject_path)
           current_version = data["project"]["version"]
@@ -81,7 +78,6 @@ jobs:
           version_parts = current_version.split(".")
           major, minor, patch = int(version_parts[0]), int(version_parts[1]), int(version_parts[2])
           
-          # Анализируем коммиты
           has_major = has_minor = has_fix = False
           
           for commit in commits:
@@ -95,7 +91,6 @@ jobs:
                   has_fix = True
                   print(f"  → Found [fix]: {commit}")
           
-          # Определяем новую версию
           if has_major:
               major += 1
               minor = patch = 0
@@ -114,16 +109,14 @@ jobs:
               exit(0)
           
           new_version = f"{major}.{minor}.{patch}"
-          print(f"\n📋 Calculated version: {current_version} → {new_version} ({bump_type})")
+          print(f"\nCalculated version: {current_version} → {new_version} ({bump_type})")
           
-          # Сохраняем информацию для следующих шагов
           with open("version_info.txt", "w") as f:
               f.write(f"{current_version}\n{new_version}\n{bump_type}")
               
-          print(f"✅ Version calculation complete")
+          print("Version calculation complete")
           EOF
           
-          # Проверяем результат
           if [ -f "no_bump.flag" ]; then
             echo "should_bump=false" >> $GITHUB_OUTPUT
             echo "No version bump needed"
@@ -133,10 +126,10 @@ jobs:
             echo "should_bump=true" >> $GITHUB_OUTPUT
             echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
             echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
-            echo "✅ Will bump to version $NEW_VERSION ($BUMP_TYPE)"
+            echo "Will bump to version $NEW_VERSION ($BUMP_TYPE)"
           else
             echo "should_bump=false" >> $GITHUB_OUTPUT
-            echo "❌ Version calculation failed"
+            echo "Version calculation failed"
           fi
 
       - name: Update version in pyproject.toml (temporary)
@@ -144,24 +137,18 @@ jobs:
         run: |
           echo "=== Temporarily updating pyproject.toml for Docker build ==="
           NEW_VERSION="${{ steps.version.outputs.new_version }}"
+          echo "Updating to version: $NEW_VERSION"
           
-          python << EOF
-          import re
-          from pathlib import Path
+          # Используем sed для замены версии
+          sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" pyproject.toml
           
-          pyproject_path = Path("pyproject.toml")
-          with open(pyproject_path, 'r', encoding='utf-8') as f:
-              content = f.read()
-          
-          version_pattern = r'^version\s*=\s*["\'][^"\']*["\']'
-          new_version_line = f'version = "{NEW_VERSION}"'
-          updated_content = re.sub(version_pattern, new_version_line, content, flags=re.MULTILINE)
-          
-          with open(pyproject_path, 'w', encoding='utf-8') as f:
-              f.write(updated_content)
-          
-          print(f"✅ Updated pyproject.toml to version {NEW_VERSION} (temporary)")
-          EOF
+          # Проверяем, что замена прошла успешно
+          if grep -q "version = \"$NEW_VERSION\"" pyproject.toml; then
+            echo "Updated pyproject.toml to version $NEW_VERSION (temporary)"
+          else
+            echo "Failed to update version in pyproject.toml"
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         if: steps.version.outputs.should_bump == 'true'
@@ -172,12 +159,11 @@ jobs:
         run: |
           echo "=== Testing Docker build with new version ==="
           
-          # Пробуем собрать Docker образ
           if docker build -t test-build:${{ steps.version.outputs.new_version }} .; then
-            echo "✅ Docker build successful"
+            echo "Docker build successful"
             echo "docker_build_success=true" >> $GITHUB_ENV
           else
-            echo "❌ Docker build failed"
+            echo "Docker build failed"
             echo "docker_build_success=false" >> $GITHUB_ENV
             exit 1
           fi
@@ -194,15 +180,13 @@ jobs:
         run: |
           echo "=== Building and pushing final Docker image ==="
           
-          # Собираем с тегами
           docker build -t $DOCKER_USER/realtimetranslator-backend:$NEW_VERSION \
                        -t $DOCKER_USER/realtimetranslator-backend:latest .
           
-          # Пушим оба тега
           docker push $DOCKER_USER/realtimetranslator-backend:$NEW_VERSION
           docker push $DOCKER_USER/realtimetranslator-backend:latest
           
-          echo "✅ Docker images pushed successfully"
+          echo "Docker images pushed successfully"
 
       - name: Commit version change (only after successful Docker build)
         if: steps.version.outputs.should_bump == 'true' && env.docker_build_success == 'true'
@@ -218,11 +202,11 @@ jobs:
           git commit -m "chore: bump version to ${NEW_VERSION} (${BUMP_TYPE})"
           git push
           
-          echo "✅ Successfully committed version ${NEW_VERSION}"
+          echo "Successfully committed version ${NEW_VERSION}"
 
       - name: Cleanup on failure
         if: failure() && steps.version.outputs.should_bump == 'true'
         run: |
           echo "=== Build failed, reverting pyproject.toml ==="
           git checkout HEAD -- pyproject.toml
-          echo "❌ Version bump cancelled due to build failure"
+          echo "Version bump cancelled due to build failure"
