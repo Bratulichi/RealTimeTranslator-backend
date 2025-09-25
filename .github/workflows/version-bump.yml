@@ -1,251 +1,67 @@
-name: Version Bump and Docker Build
+name: Build and Push
 
 on:
   push:
     branches: [ "develop" ]
 
 jobs:
-  version-and-docker:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.CICD_TOKEN }}
           submodules: recursive
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+      - name: Setup
+        run: |
+          pip install toml
 
-      - name: Install toml
-        run: pip install toml
-
-      - name: Calculate new version (without committing)
+      - name: Calculate version
         id: version
         run: |
-          echo "=== Calculating new version ==="
+          COMMITS=$(git log --oneline --grep="chore: bump version" -n 1 --pretty=format:"%H" || echo "")
+          RANGE="${COMMITS:+$COMMITS..HEAD}"
+          RANGE="${RANGE:-$(git rev-list --max-count=50 HEAD | tail -n1)..HEAD}"
           
-          LAST_VERSION_COMMIT=$(git log --oneline --grep="bump version" -n 1 --pretty=format:"%H" || echo "")
+          MSGS=$(git log --pretty=format:"%s" $RANGE | grep -v "chore: bump version" || echo "")
+          [ -z "$MSGS" ] && { echo "skip=true" >> $GITHUB_OUTPUT; exit 0; }
           
-          if [ -n "$LAST_VERSION_COMMIT" ]; then
-            echo "Last version bump commit: $LAST_VERSION_COMMIT"
-            COMMITS_RANGE="${LAST_VERSION_COMMIT}..HEAD"
-          else
-            echo "No previous version bump found, analyzing last 50 commits"
-            COMMITS_RANGE="$(git rev-list --max-count=50 HEAD | tail -n1)..HEAD"
-          fi
+          python3 -c "
+          import toml; from pathlib import Path
+          msgs = '''$MSGS'''.strip().split('\n')
+          data = toml.load('pyproject.toml')
+          v = data['project']['version'].split('.')
+          major, minor, patch = int(v[0]), int(v[1]), int(v[2])
           
-          echo "Analyzing commits in range: $COMMITS_RANGE"
-          COMMITS=$(git log --pretty=format:"%s" $COMMITS_RANGE | grep -v "bump version" || echo "")
+          if any(m.startswith('[major]') for m in msgs): major += 1; minor = patch = 0
+          elif any(m.startswith('[minor]') for m in msgs): minor += 1; patch = 0  
+          elif any(m.startswith('[fix]') for m in msgs): patch += 1
+          else: exit(0)
           
-          if [ -z "$COMMITS" ]; then
-            echo "No commits to analyze"
-            echo "should_bump=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          echo "Commits to analyze:"
-          echo "$COMMITS"
-          
-          export COMMITS="$COMMITS"
-          
-          python << 'EOF'
-          import toml
-          import os
-          from pathlib import Path
-          
-          commits_text = os.environ.get('COMMITS', '').strip()
-          if not commits_text:
-              print("No commits to analyze")
-              exit(0)
-              
-          commits = [line.strip() for line in commits_text.split('\n') if line.strip()]
-          
-          print(f"Analyzing {len(commits)} commits:")
-          for i, commit in enumerate(commits, 1):
-              print(f"  {i}. {commit}")
-          
-          pyproject_path = Path("pyproject.toml")
-          data = toml.load(pyproject_path)
-          current_version = data["project"]["version"]
-          print(f"\nCurrent version: {current_version}")
-          
-          version_parts = current_version.split(".")
-          major, minor, patch = int(version_parts[0]), int(version_parts[1]), int(version_parts[2])
-          
-          has_major = has_minor = has_fix = False
-          
-          for commit in commits:
-              if commit.startswith("[major]"):
-                  has_major = True
-                  print(f"  → Found [major]: {commit}")
-              elif commit.startswith("[minor]"):
-                  has_minor = True
-                  print(f"  → Found [minor]: {commit}")
-              elif commit.startswith("[fix]"):
-                  has_fix = True
-                  print(f"  → Found [fix]: {commit}")
-          
-          if has_major:
-              major += 1
-              minor = patch = 0
-              bump_type = "major"
-          elif has_minor:
-              minor += 1
-              patch = 0
-              bump_type = "minor"
-          elif has_fix:
-              patch += 1
-              bump_type = "patch"
-          else:
-              print("No version keywords found - no bump needed")
-              with open("no_bump.flag", "w") as f:
-                  f.write("no_bump")
-              exit(0)
-          
-          new_version = f"{major}.{minor}.{patch}"
-          print(f"\nCalculated version: {current_version} → {new_version} ({bump_type})")
-          
-          with open("version_info.txt", "w") as f:
-              f.write(f"{current_version}\n{new_version}\n{bump_type}")
-              
-          print("Version calculation complete")
-          EOF
-          
-          if [ -f "no_bump.flag" ]; then
-            echo "should_bump=false" >> $GITHUB_OUTPUT
-            echo "No version bump needed"
-          elif [ -f "version_info.txt" ]; then
-            CURRENT_VERSION=$(sed -n '1p' version_info.txt)
-            NEW_VERSION=$(sed -n '2p' version_info.txt)
-            BUMP_TYPE=$(sed -n '3p' version_info.txt)
-            echo "should_bump=true" >> $GITHUB_OUTPUT
-            echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-            echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-            echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
-            echo "Will bump to version $NEW_VERSION ($BUMP_TYPE)"
-          else
-            echo "should_bump=false" >> $GITHUB_OUTPUT
-            echo "Version calculation failed"
-          fi
+          new_v = f'{major}.{minor}.{patch}'
+          print(f'new_version={new_v}')
+          with open('pyproject.toml', 'r') as f: content = f.read()
+          with open('pyproject.toml', 'w') as f: 
+              f.write(content.replace(f'version = \"{data[\"project\"][\"version\"]}\"', f'version = \"{new_v}\"'))
+          " >> $GITHUB_OUTPUT
 
-      - name: Backup original state
-        if: steps.version.outputs.should_bump == 'true'
-        run: |
-          echo "=== Creating backup of current git state ==="
-          # Сохраняем текущий коммит для возможного отката
-          echo "$(git rev-parse HEAD)" > original_commit.txt
-          # Также создаем backup pyproject.toml
-          cp pyproject.toml pyproject.toml.backup
-
-      - name: Update version in pyproject.toml (temporary for build test)
-        if: steps.version.outputs.should_bump == 'true'
-        run: |
-          echo "=== Temporarily updating pyproject.toml for Docker build test ==="
-          NEW_VERSION="${{ steps.version.outputs.new_version }}"
-          echo "Updating to version: $NEW_VERSION"
-          
-          sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" pyproject.toml
-          
-          if grep -q "version = \"$NEW_VERSION\"" pyproject.toml; then
-            echo "Updated pyproject.toml to version $NEW_VERSION (temporary)"
-          else
-            echo "Failed to update version in pyproject.toml"
-            exit 1
-          fi
-
-      - name: Set up Docker Buildx
-        if: steps.version.outputs.should_bump == 'true'
-        uses: docker/setup-buildx-action@v3
-
-      - name: Test Docker build with new version
-        if: steps.version.outputs.should_bump == 'true'
-        run: |
-          echo "=== Testing Docker build with new version via Makefile ==="
-          
-          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version *= *"//; s/"//')
-          echo "Testing build for version: $VERSION"
-          
-          if make build; then
-            echo "Docker build test successful"
-            echo "docker_build_success=true" >> $GITHUB_ENV
-          else
-            echo "Docker build test failed - restoring original version"
-            cp pyproject.toml.backup pyproject.toml
-            echo "docker_build_success=false" >> $GITHUB_ENV
-            exit 1
-          fi
-
-      - name: Push Docker image
-        if: steps.version.outputs.should_bump == 'true' && env.docker_build_success == 'true'
+      - name: Build and push
+        if: steps.version.outputs.skip != 'true'
         env:
           DOCKER_USER: ${{ secrets.DOCKER_USER }}
           DOCKER_PASS: ${{ secrets.DOCKER_PASS }}
         run: |
-          echo "=== Pushing Docker image via Makefile ==="
-          
-          # Пушим версионный тег через Makefile
-          if make push; then
-            echo "Docker push successful"
-            echo "docker_push_success=true" >> $GITHUB_ENV
-          else
-            echo "Docker push failed - restoring original version"
-            cp pyproject.toml.backup pyproject.toml
-            exit 1
-          fi
-          
-          echo "Docker images pushed successfully"
-
-      - name: Commit version change (only after successful Docker build and push)
-        if: steps.version.outputs.should_bump == 'true' && env.docker_build_success == 'true' && env.docker_push_success == 'true'
-        run: |
-          NEW_VERSION="${{ steps.version.outputs.new_version }}"
-          BUMP_TYPE="${{ steps.version.outputs.bump_type }}"
-          
-          echo "=== Committing version change ==="
-          
-          # Настраиваем git с правильными учетными данными
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          # Добавляем все изменения (включая ваши + версию)
-          git add -A
-          git commit -m "[version] ${NEW_VERSION} (${BUMP_TYPE})"
+          make build
+          make push
           
-          # Пушим с использованием токена
+          NEW_VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version *= *"//; s/"//')
+          git add pyproject.toml
+          git commit -m "chore: bump version to ${NEW_VERSION}"
           git push origin develop
-          
-          echo "Successfully committed version ${NEW_VERSION} with all changes"
-          
-          # Удаляем backup только после успешного коммита
-          rm -f pyproject.toml.backup original_commit.txt
-
-      - name: Cleanup on failure
-        if: failure() && steps.version.outputs.should_bump == 'true'
-        run: |
-          echo "=== Build or push failed, reverting all changes ==="
-          
-          # Читаем оригинальный коммит
-          if [ -f original_commit.txt ]; then
-            ORIGINAL_COMMIT=$(cat original_commit.txt)
-            echo "Reverting to commit: $ORIGINAL_COMMIT"
-            
-            # Сбрасываем все изменения к оригинальному состоянию
-            git reset --hard $ORIGINAL_COMMIT
-            echo "Reverted all changes to original state"
-          else
-            echo "No original commit found, reverting only pyproject.toml"
-            if [ -f pyproject.toml.backup ]; then
-              cp pyproject.toml.backup pyproject.toml
-            fi
-          fi
-          
-          # Очищаем временные файлы
-          rm -f pyproject.toml.backup original_commit.txt
-          
-          echo "All changes cancelled due to failure"
