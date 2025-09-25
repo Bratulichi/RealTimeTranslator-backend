@@ -204,18 +204,7 @@ jobs:
             cp pyproject.toml.backup pyproject.toml
             exit 1
           fi
-          
-          # Создаем и пушим latest тег
-          IMAGE_NAME="wepal/realtime-translator-backend"
-          docker tag "$IMAGE_NAME:$VERSION" "$IMAGE_NAME:latest"
-          
-          if docker push "$IMAGE_NAME:latest"; then
-            echo "Latest tag pushed successfully"
-          else
-            echo "Failed to push latest tag - but version tag was pushed successfully"
-            # Не фейлим тут, так как основной тег уже запушен
-          fi
-          
+
           echo "Docker images pushed successfully"
 
       - name: Commit version change (only after successful Docker build and push)
@@ -229,7 +218,7 @@ jobs:
           git config user.name github-actions
           git config user.email github-actions@github.com
           git add pyproject.toml
-          git commit -m "chore: bump version to ${NEW_VERSION} (${BUMP_TYPE})"
+          git commit -m "chore: increase version to ${NEW_VERSION} (${BUMP_TYPE})"
           git push
           
           echo "Successfully committed version ${NEW_VERSION}"
