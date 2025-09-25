@@ -1,4 +1,4 @@
-IMAGE_NAME = wepal/realtime-translator/backend
+IMAGE_NAME = wepal/realtime-translator-backend
 DOCKERFILE = Dockerfile
 CONTEXT = .
 
