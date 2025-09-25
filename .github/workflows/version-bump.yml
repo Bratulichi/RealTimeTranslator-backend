@@ -189,15 +189,6 @@ jobs:
         run: |
           echo "=== Pushing Docker image via Makefile ==="
           
-          if [ -z "$DOCKER_USER" ] || [ -z "$DOCKER_PASS" ]; then
-            echo "Error: DOCKER_USER or DOCKER_PASS is not set"
-            cp pyproject.toml.backup pyproject.toml
-            exit 1
-          fi
-          
-          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version *= *"//; s/"//')
-          echo "Pushing image with version: $VERSION"
-          
           # Пушим версионный тег через Makefile
           if make push; then
             echo "Docker push successful"
@@ -206,17 +197,6 @@ jobs:
             echo "Docker push failed - restoring original version"
             cp pyproject.toml.backup pyproject.toml
             exit 1
-          fi
-          
-          # Создаем и пушим latest тег
-          IMAGE_NAME="wepal/realtime-translator-backend"
-          docker tag "$IMAGE_NAME:$VERSION" "$IMAGE_NAME:latest"
-          
-          if docker push "$IMAGE_NAME:latest"; then
-            echo "Latest tag pushed successfully"
-          else
-            echo "Failed to push latest tag - but version tag was pushed successfully"
-            # Не фейлим тут, так как основной тег уже запушен
           fi
           
           echo "Docker images pushed successfully"
@@ -235,7 +215,7 @@ jobs:
           
           # Добавляем все изменения (включая ваши + версию)
           git add -A
-          git commit -m "chore: bump version to ${NEW_VERSION} (${BUMP_TYPE})"
+          git commit -m "[version] ${NEW_VERSION} (${BUMP_TYPE})"
           
           # Пушим с использованием токена
           git push origin develop
