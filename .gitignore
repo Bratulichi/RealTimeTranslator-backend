@@ -212,3 +212,10 @@ dmypy.json
 cython_debug/
 
 /.idea/
+
+
+# GitHub Actions temporary files
+version_info.txt
+pyproject.toml.backup
+original_commit.txt
+no_bump.flag
