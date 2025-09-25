@@ -46,7 +46,6 @@ app.add_middleware(
     allow_methods=['*'],
     allow_headers=['*'],
 )
-
 custom_openapi(
     app,
     title='RealTimeTranslator Backend',
