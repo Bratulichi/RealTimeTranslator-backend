@@ -12,5 +12,5 @@ dependencies = [
 [tool.uv.workspace]
 members = [
     "src/base_async",
-    "src/base_async/src/base_module",
+    "src/base_async/base_module",
 ]

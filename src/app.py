@@ -15,7 +15,7 @@ from base_module import (
 # from app.config import config
 # from app.injectors import services
 from routers import api_router
-
+from base_async.services import TracingService
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -32,29 +32,35 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             pass
 
 
-app = FastAPI(
-    title='RealTimeTranslator',
-    lifespan=lifespan,
-    openapi_url=f'/api/v1/openapi.json',
-    docs_url='/docs',
-)
-setup_logging(app, default_level=10)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=['*'],
-    allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
-)
-custom_openapi(
-    app,
-    title='RealTimeTranslator Backend',
-    version=get_app_version(),
-    description='Бэкенд сервис RealTimeTranslator',
-)
-exception_handler(app)
-app.include_router(api_router, prefix='/api/v1')
+def setup_app():
+    app = FastAPI(
+        title='RealTimeTranslator',
+        lifespan=lifespan,
+        openapi_url=f'/api/v1/openapi.json',
+        docs_url='/docs',
+    )
+    setup_logging(app, default_level=10)
+    TracingService.setup_fastapi_tracing(app)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=['*'],
+        allow_credentials=True,
+        allow_methods=['*'],
+        allow_headers=['*'],
+    )
+    custom_openapi(
+        app,
+        title='RealTimeTranslator Backend',
+        version=get_app_version(),
+        description='Бэкенд сервис RealTimeTranslator',
+    )
+    exception_handler(app)
 
+
+    return app
+
+app = setup_app()
+app.include_router(api_router, prefix='/api/v1')
 
 def main() -> None:
     uvicorn.run(
